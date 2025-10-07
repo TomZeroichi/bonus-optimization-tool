@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>2社間ボーナス最適化ツール v-Equalize 1.7-GH</title>
+  <meta name="description" content="資金合計に対して、各ブローカーの上限を守りつつ入金ボーナスを活かし、有効証拠金を均等化するための最適化ツール（GitHub Pages 版）">
+  <style>
+    :root{ --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --key:#2563eb; --good:#059669; --bad:#dc2626; --radius:14px; --shadow:0 8px 24px rgba(15,23,42,.08); }
+    *{ box-sizing:border-box; font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; color:var(--ink); }
+    body{ margin:0; background:#f8fafc; }
+    .wrap{ max-width:1100px; margin:28px auto; padding:0 12px; }
+    .card{ border:1px solid var(--line); border-radius:var(--radius); background:#fff; box-shadow:var(--shadow); }
+    .hdr{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:16px 18px; border-bottom:1px solid var(--line); }
+    .hdr h1{ margin:0; font-size:18px; font-weight:800; }
+    .btns{ display:flex; gap:8px; flex-wrap:wrap; }
+    button{ border:1px solid var(--line); background:#fff; padding:10px 14px; border-radius:12px; cursor:pointer; font-size:14px; }
+    button.primary{ background:var(--key); color:#fff; border-color:var(--key); }
+    .body{ padding:16px; }
+    .row{ display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); gap:12px; }
+    .field{ display:flex; flex-direction:column; gap:6px; }
+    label{ font-size:12px; color:var(--muted); }
+    input[type="number"], input[type="text"], select{ width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; font-size:16px; }
+    input[readonly]{ background:#f1f5f9; color:#334155; }
+    .cols{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:12px; }
+    .col{ border:1px solid var(--line); border-radius:12px; padding:14px; }
+    .col h3{ margin:0 0 8px; font-size:16px; font-weight:800; }
+    .grid{ display:grid; grid-template-columns: 1fr; gap:10px; }
+    .row2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .switch{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+    .sum{ display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; align-items:center; }
+    .chip{ border:1px solid var(--line); padding:10px 12px; border-radius:999px; background:#fff; font-size:14px; }
+    .chip b{ margin-left:6px; font-variant-numeric:tabular-nums; }
+    .ok{ color:var(--good); } .ng{ color:var(--bad); }
+    #gh-debug{ display:none; margin-top:16px; border:1px dashed var(--bad); padding:12px; border-radius:10px; background:#fff5f5; color:#991b1b; font-size:13px; white-space:pre-wrap; }
+    @media (max-width:900px){ .cols{ grid-template-columns:1fr; } }
+    footer{ margin:16px 0 0; font-size:12px; color:#64748b; text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hdr">
+        <h1>2社間ボーナス最適化ツール v-Equalize 1.7-GH</h1>
+        <div class="btns">
+          <button class="ghost" id="gh-csv">CSV出力</button>
+          <button id="gh-reset">初期化</button>
+        </div>
+      </div>
+
+      <div class="body">
+        <!-- グローバル -->
+        <div class="row">
+          <div class="field" style="grid-column: span 4;">
+            <label>資金合計 (¥)</label>
+            <input type="number" id="gh-total" min="0" step="1" value="160000" autocomplete="off">
+          </div>
+          <div class="field" style="grid-column: span 4;">
+            <label>為替レート ($1 → ¥) <span style="color:#475569;">※1円刻み</span></label>
+            <input type="number" id="gh-usdjpy" min="1" step="1" value="150" autocomplete="off">
+          </div>
+          <div class="field" style="grid-column: span 4;">
+            <label>配分モード</label>
+            <select id="gh-mode">
+              <option value="equal" selected>均等化優先（E完全一致／余りOK）</option>
+              <option value="capital">資金使用優先（資金合計に最大限寄せる）</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cols">
+          <!-- A社 -->
+          <div class="col">
+            <h3>A社</h3>
+            <div class="grid">
+              <div class="field"><label>FX業者名</label><input id="gh-a-name" type="text" value="A社" autocomplete="off"></div>
+              <div class="row2">
+                <div class="field"><label>ボーナス付与率(%)</label><input id="gh-a-rate" type="number" min="0" step="1" value="100" autocomplete="off"></div>
+                <div class="field">
+                  <label>上限の通貨</label>
+                  <select id="gh-a-cur"><option value="USD">USD</option><option value="JPY">JPY</option></select>
+                </div>
+              </div>
+              <div class="row2">
+                <div class="field"><label>最大ボーナス($)</label><input id="gh-a-maxu" type="number" min="0" step="1" value="500" autocomplete="off"></div>
+                <div class="field"><label>最大ボーナス(¥)</label><input id="gh-a-maxj" type="number" min="0" step="1" value="0" autocomplete="off" readonly></div>
+              </div>
+              <div class="field"><label>開設ボーナス(¥)</label><input id="gh-a-open" type="number" min="0" step="1" value="13000" autocomplete="off"></div>
+              <div class="switch"><input id="gh-a-man" type="checkbox"> <label for="gh-a-man">入金額を手動で固定</label></div>
+              <div class="field"><label>入金額(¥) <span id="gh-a-hint" style="color:#475569;">(自動)</span></label><input id="gh-a-dep" type="number" min="0" step="1" value="0" readonly autocomplete="off"></div>
+              <div class="row2">
+                <div class="field"><label>入金ボーナス(¥)</label><input id="gh-a-bon" type="number" readonly></div>
+                <div class="field"><label>有効証拠金(¥)</label><input id="gh-a-eq" type="number" readonly></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- B社 -->
+          <div class="col">
+            <h3>B社</h3>
+            <div class="grid">
+              <div class="field"><label>FX業者名</label><input id="gh-b-name" type="text" value="B社" autocomplete="off"></div>
+              <div class="row2">
+                <div class="field"><label>ボーナス付与率(%)</label><input id="gh-b-rate" type="number" min="0" step="1" value="100" autocomplete="off"></div>
+                <div class="field">
+                  <label>上限の通貨</label>
+                  <select id="gh-b-cur"><option value="USD">USD</option><option value="JPY">JPY</option></select>
+                </div>
+              </div>
+              <div class="row2">
+                <div class="field"><label>最大ボーナス($)</label><input id="gh-b-maxu" type="number" min="0" step="1" value="0" autocomplete="off" readonly></div>
+                <div class="field"><label>最大ボーナス(¥)</label><input id="gh-b-maxj" type="number" min="0" step="1" value="80000" autocomplete="off"></div>
+              </div>
+              <div class="field"><label>開設ボーナス(¥)</label><input id="gh-b-open" type="number" min="0" step="1" value="15000" autocomplete="off"></div>
+              <div class="switch"><input id="gh-b-man" type="checkbox"> <label for="gh-b-man">入金額を手動で固定</label></div>
+              <div class="field"><label>入金額(¥) <span id="gh-b-hint" style="color:#475569;">(自動)</span></label><input id="gh-b-dep" type="number" min="0" step="1" value="0" readonly autocomplete="off"></div>
+              <div class="row2">
+                <div class="field"><label>入金ボーナス(¥)</label><input id="gh-b-bon" type="number" readonly></div>
+                <div class="field"><label>有効証拠金(¥)</label><input id="gh-b-eq" type="number" readonly></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作 -->
+        <div class="btns" style="margin-top:14px;">
+          <button class="primary" id="gh-calc">計算</button>
+          <button class="ghost" id="gh-balance">入金合計＝資金合計に合わせる（上限厳守・E差最小）</button>
+        </div>
+
+        <!-- サマリー -->
+        <div class="sum">
+          <div class="chip">入金合計: <b id="gh-sum-dep">-</b></div>
+          <div class="chip">資金合計: <b id="gh-sum-cap">-</b></div>
+          <div class="chip">差額: <b id="gh-sum-diff">-</b></div>
+          <div class="chip">均等化ターゲットE: <b id="gh-target-e">-</b></div>
+        </div>
+
+        <!-- デバッグ -->
+        <div id="gh-debug"></div>
+      </div>
+    </div>
+
+    <footer>© v-Equalize 1.7-GH — ブラウザに自動保存（localStorage）。初期化でいつでもリセットできます。</footer>
+  </div>
+
+  <script>
+  (function(){
+    "use strict";
+    const ID = (x)=>document.getElementById(x);
+    const safeNum = (v)=>{ const n=Number(v); return (isFinite(n)&&!isNaN(n))? n:0; };
+    const yen=(n)=>safeNum(n);
+    const fmt=(n)=>"¥"+Math.round(safeNum(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");
+    const showErr=(m,e)=>{ const b=ID("gh-debug"); b.style.display="block"; b.textContent="[ERROR] "+m+(e? "\\n"+(e.stack||e):""); };
+
+    const DEFAULTS = {
+      total:160000, usdjpy:150, mode:"equal",
+      A:{name:"A社", rate:100, cur:"USD", maxu:500, maxj:0, open:13000, man:false, dep:0, bon:0, eq:0},
+      B:{name:"B社", rate:100, cur:"JPY", maxu:0,   maxj:80000, open:15000, man:false, dep:0, bon:0, eq:0}
+    };
+    const KEY="arb_eq_v17_state";
+    const OLD_KEYS=["arb_eq_v16_state","arb_eq_v15_state","arb_eq_v14_state","arb_eq_v13_state","dual_arb_equalize_v1"];
+    const S = JSON.parse(JSON.stringify(DEFAULTS));
+
+    // 計算系
+    const rate=(s)=>Math.max(0, safeNum(s.rate)/100);
+    const capYen=(s)=> (s.cur==="USD" ? (safeNum(s.maxu)>0? safeNum(s.maxu)*S.usdjpy:Infinity)
+                                      : (safeNum(s.maxj)>0? safeNum(s.maxj):Infinity));
+    const maxDep=(s)=>{ const r=rate(s), c=capYen(s); return (r<=0||!isFinite(c))?Infinity:Math.floor(c/r); };
+    const recompute=(s)=>{ const r=rate(s), c=capYen(s), d=yen(s.dep); const b=Math.min(c, d*r); s.bon=isFinite(b)?b:d*r; s.eq=d+yen(s.open)+s.bon; };
+    const previewEq=(s,dn)=>{ const r=rate(s), c=capYen(s), d=Math.max(0,yen(dn)); const b=Math.min(c,d*r); return d+yen(s.open)+(isFinite(b)?b:d*r); };
+    const depFromE=(s,E)=>{ const r=rate(s), o=yen(s.open); if(E<=o) return 0; if(r===0) return Math.max(0,E-o); const thr=isFinite(capYen(s))?capYen(s)/r:Infinity; const raw=(E-o)/(1+r); return Math.max(0, Math.min(raw, thr)); };
+    const Emax=(s)=>{ const thr=maxDep(s), c=capYen(s); const bmax=Math.min(c, thr*rate(s)); return yen(s.open)+thr+bmax; };
+
+    // UI適用/読取/書込
+    const applyStateToUI=()=>{
+      ID("gh-total").value=S.total; ID("gh-usdjpy").value=S.usdjpy; ID("gh-mode").value=S.mode;
+      ID("gh-a-name").value=S.A.name; ID("gh-a-rate").value=S.A.rate; ID("gh-a-cur").value=S.A.cur; ID("gh-a-maxu").value=S.A.maxu; ID("gh-a-maxj").value=S.A.maxj; ID("gh-a-open").value=S.A.open; ID("gh-a-man").checked=S.A.man; ID("gh-a-dep").value=S.A.dep;
+      ID("gh-b-name").value=S.B.name; ID("gh-b-rate").value=S.B.rate; ID("gh-b-cur").value=S.B.cur; ID("gh-b-maxu").value=S.B.maxu; ID("gh-b-maxj").value=S.B.maxj; ID("gh-b-open").value=S.B.open; ID("gh-b-man").checked=S.B.man; ID("gh-b-dep").value=S.B.dep;
+    };
+
+    const updateMaxFields=()=>{
+      const aU=ID("gh-a-maxu"), aJ=ID("gh-a-maxj"), bU=ID("gh-b-maxu"), bJ=ID("gh-b-maxj");
+      if(S.A.cur==="USD"){ aU.readOnly=false; aJ.readOnly=true; aJ.value=Math.round(safeNum(S.A.maxu)*S.usdjpy); }
+      else{ aU.readOnly=true; aJ.readOnly=false; }
+      if(S.B.cur==="USD"){ bU.readOnly=false; bJ.readOnly=true; bJ.value=Math.round(safeNum(S.B.maxu)*S.usdjpy); }
+      else{ bU.readOnly=true; bJ.readOnly=false; }
+    };
+
+    const write=()=>{
+      updateMaxFields();
+      ID("gh-a-dep").readOnly=!S.A.man; ID("gh-a-hint").textContent=S.A.man?"(手動)":"(自動)";
+      ID("gh-b-dep").readOnly=!S.B.man; ID("gh-b-hint").textContent=S.B.man?"(手動)":"(自動)";
+      ID("gh-a-dep").value=Math.round(S.A.dep); ID("gh-b-dep").value=Math.round(S.B.dep);
+      ID("gh-a-bon").value=Math.round(S.A.bon); ID("gh-b-bon").value=Math.round(S.B.bon);
+      ID("gh-a-eq").value=Math.round(S.A.eq);   ID("gh-b-eq").value=Math.round(S.B.eq);
+      const sum=yen(S.A.dep)+yen(S.B.dep), diff=S.total-sum;
+      ID("gh-sum-dep").textContent=fmt(sum); ID("gh-sum-cap").textContent=fmt(S.total);
+      ID("gh-sum-diff").innerHTML= diff===0? `<span class="ok">${fmt(diff)}</span>` : (diff>0? `<span class="ok">+${fmt(diff)}</span>`:`<span class="ng">${fmt(diff)}</span>`);
+    };
+
+    const read=()=>{
+      S.total=yen(ID("gh-total").value); S.usdjpy=Math.max(1, Math.round(yen(ID("gh-usdjpy").value)||150)); S.mode=ID("gh-mode").value;
+      S.A.name=ID("gh-a-name").value; S.A.rate=yen(ID("gh-a-rate").value); S.A.cur=ID("gh-a-cur").value; S.A.maxu=yen(ID("gh-a-maxu").value); if(S.A.cur==="JPY") S.A.maxj=yen(ID("gh-a-maxj").value); S.A.open=yen(ID("gh-a-open").value); S.A.man=ID("gh-a-man").checked; if(S.A.man) S.A.dep=yen(ID("gh-a-dep").value);
+      S.B.name=ID("gh-b-name").value; S.B.rate=yen(ID("gh-b-rate").value); S.B.cur=ID("gh-b-cur").value; S.B.maxu=yen(ID("gh-b-maxu").value); if(S.B.cur==="JPY") S.B.maxj=yen(ID("gh-b-maxj").value); S.B.open=yen(ID("gh-b-open").value); S.B.man=ID("gh-b-man").checked; if(S.B.man) S.B.dep=yen(ID("gh-b-dep").value);
+    };
+
+    // 均等化スナップ
+    const snapPerfectEquality=()=>{
+      if(S.mode!=="equal") return;
+      const target=Math.min(S.A.eq,S.B.eq);
+      const dA=Math.min(maxDep(S.A), Math.floor(depFromE(S.A,target)));
+      const dB=Math.min(maxDep(S.B), Math.floor(depFromE(S.B,target)));
+      S.A.dep=Math.max(0,dA); S.B.dep=Math.max(0,dB);
+      [S.A,S.B].forEach(recompute);
+    };
+
+    const greedyAdjustTowardsTotal=(diff)=>{
+      let guard=0;
+      while(diff!==0 && guard<200000){
+        guard++;
+        const sign=diff>0?1:-1;
+        const cand=[S.A,S.B].map(s=>{
+          const lim=maxDep(s), next=yen(s.dep)+sign;
+          const can= sign>0 ? (next <= (isFinite(lim)? lim:Infinity)) : (next>=0);
+          if(!can) return null;
+          const eNext=previewEq(s,next), eOther=(s===S.A?S.B.eq:S.A.eq);
+          return {s,next,delta:Math.abs(eNext-eOther)};
+        }).filter(Boolean);
+        if(cand.length===0) break;
+        cand.sort((x,y)=>x.delta-y.delta);
+        const pick=cand[0]; pick.s.dep=pick.next; recompute(pick.s);
+        diff += (sign<0?1:-1);
+      }
+    };
+
+    // 自動保存
+    const autosave = ()=>{ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){ showErr("自動保存に失敗（ブラウザの保存制限）", e); } };
+
+    const compute=()=>{
+      try{
+        read();
+        if(S.A.cur==="JPY") S.A.maxu=yen(S.A.maxu)||0;
+        if(S.B.cur==="JPY") S.B.maxu=yen(S.B.maxu)||0;
+
+        [S.A,S.B].forEach(s=>{ if(s.man){ const lim=maxDep(s); if(isFinite(lim)&&yen(s.dep)>lim) s.dep=lim; } });
+
+        const fixed=[], free=[];
+        if(S.A.man) fixed.push(S.A); else free.push(S.A);
+        if(S.B.man) fixed.push(S.B); else free.push(S.B);
+
+        const fixedSum=fixed.reduce((a,s)=>a+yen(s.dep),0);
+        if(fixedSum>S.total){ alert("手動入金の合計が資金合計を超えています。手動金額を下げてください。"); }
+        let R=Math.max(0,S.total-fixedSum);
+
+        free.forEach(s=>s.dep=0); [S.A,S.B].forEach(recompute);
+
+        let targetE=0;
+        if(free.length===2){
+          const Ehi=Math.min(Emax(free[0]),Emax(free[1]));
+          const needAtEhi=free.reduce((a,s)=>a+depFromE(s,Ehi),0);
+          if(S.mode==="equal"){
+            if(needAtEhi<=R){ targetE=Ehi; } else {
+              let lo=Math.max(yen(free[0].open),yen(free[1].open)), hi=Ehi;
+              for(let i=0;i<50;i++){ const mid=(lo+hi)/2, need=free.reduce((a,s)=>a+depFromE(s,mid),0); if(need<=R) lo=mid; else hi=mid; }
+              targetE=lo;
+            }
+          }else{
+            let lo=Math.max(yen(free[0].open),yen(free[1].open)), hi=Ehi+(R+1e6);
+            for(let i=0;i<60;i++){ const mid=(lo+hi)/2, need=free.reduce((a,s)=>a+depFromE(s,mid),0); if(need>R) hi=mid; else lo=mid; }
+            targetE=lo;
+          }
+          const cont=free.map(s=>depFromE(s,targetE));
+          const lims=free.map(s=>maxDep(s));
+          const floors=cont.map((d,i)=>Math.min(Math.floor(d),lims[i]));
+          free.forEach((s,i)=>s.dep=floors[i]);
+          [S.A,S.B].forEach(recompute);
+          snapPerfectEquality();
+        }else if(free.length===1){
+          const s=free[0], other=fixed[0]||null;
+          let target=other?Math.min(other.eq,Emax(s)):Emax(s);
+          let need=depFromE(s,target);
+          const lim=maxDep(s);
+          s.dep=Math.min((isFinite(lim)?lim:need), Math.min(need,R));
+          [S.A,S.B].forEach(recompute);
+        }
+
+        [S.A,S.B].forEach(recompute);
+        if(S.mode==="capital"){
+          let diff=S.total-(yen(S.A.dep)+yen(S.B.dep));
+          if(diff!==0) greedyAdjustTowardsTotal(diff);
+        }else{
+          snapPerfectEquality();
+        }
+
+        if(targetE===0) targetE=(S.A.eq+S.B.eq)/2;
+        ID("gh-target-e").textContent=fmt(targetE);
+        write();
+        autosave();
+        const box=ID("gh-debug"); box.style.display="none"; box.textContent="";
+      }catch(e){ showErr("compute() 例外", e); }
+    };
+
+    // 旧キー移行
+    const migrateOldKeys = ()=>{
+      try{
+        if(localStorage.getItem(KEY)) return;
+        for(const k of OLD_KEYS){
+          const raw=localStorage.getItem(k);
+          if(raw){ try{ localStorage.setItem(KEY, raw); }catch(_e){} }
+        }
+        OLD_KEYS.forEach(k=>{ try{ localStorage.removeItem(k); }catch(_e){} });
+      }catch(_e){}
+    };
+
+    // イベント
+    const bind=()=>{
+      const on=(id,ev,fn)=>{ const el=ID(id); if(!el){ showErr("要素が見つかりません: "+id); return; } el.addEventListener(ev,fn); };
+
+      ["input","change"].forEach(ev=>{
+        on("gh-total",ev,()=>{ S.total=yen(ID("gh-total").value); compute(); });
+        on("gh-usdjpy",ev,()=>{ S.usdjpy=Math.max(1,Math.round(yen(ID("gh-usdjpy").value)||150)); compute(); });
+        on("gh-mode","change",()=>{ S.mode=ID("gh-mode").value; compute(); });
+
+        on("gh-a-name",ev,()=>{ S.A.name=ID("gh-a-name").value; });
+        on("gh-a-rate",ev,()=>{ S.A.rate=yen(ID("gh-a-rate").value); compute(); });
+        on("gh-a-cur","change",()=>{ const was=S.A.cur; S.A.cur=ID("gh-a-cur").value; if(was!=="JPY"&&S.A.cur==="JPY"){ ID("gh-a-maxu").value=""; S.A.maxu=0; } compute(); });
+        on("gh-a-maxu",ev,()=>{ S.A.maxu=yen(ID("gh-a-maxu").value); compute(); });
+        on("gh-a-maxj",ev,()=>{ S.A.maxj=yen(ID("gh-a-maxj").value); compute(); });
+        on("gh-a-open",ev,()=>{ S.A.open=yen(ID("gh-a-open").value); compute(); });
+        on("gh-a-man","change",()=>{ S.A.man=ID("gh-a-man").checked; compute(); });
+        on("gh-a-dep",ev,()=>{ if(S.A.man){ S.A.dep=yen(ID("gh-a-dep").value); compute(); } });
+
+        on("gh-b-name",ev,()=>{ S.B.name=ID("gh-b-name").value; });
+        on("gh-b-rate",ev,()=>{ S.B.rate=yen(ID("gh-b-rate").value); compute(); });
+        on("gh-b-cur","change",()=>{ const was=S.B.cur; S.B.cur=ID("gh-b-cur").value; if(was!=="JPY"&&S.B.cur==="JPY"){ ID("gh-b-maxu").value=""; S.B.maxu=0; } compute(); });
+        on("gh-b-maxu",ev,()=>{ S.B.maxu=yen(ID("gh-b-maxu").value); compute(); });
+        on("gh-b-maxj",ev,()=>{ S.B.maxj=yen(ID("gh-b-maxj").value); compute(); });
+        on("gh-b-open",ev,()=>{ S.B.open=yen(ID("gh-b-open").value); compute(); });
+        on("gh-b-man","change",()=>{ S.B.man=ID("gh-b-man").checked; compute(); });
+        on("gh-b-dep",ev,()=>{ if(S.B.man){ S.B.dep=yen(ID("gh-b-dep").value); compute(); } });
+      });
+
+      on("gh-calc","click", compute);
+      on("gh-balance","click", ()=>{ S.mode="capital"; compute(); });
+
+      on("gh-reset","click", ()=>{
+        try{
+          localStorage.removeItem(KEY);
+          OLD_KEYS.forEach(k=>localStorage.removeItem(k));
+          for(let i=0;i<localStorage.length;i++){
+            const k=localStorage.key(i);
+            if(/arb_eq|dae-|equalize/i.test(k||"")){ try{ localStorage.removeItem(k); }catch(_e){} }
+          }
+        }catch(_e){}
+        Object.assign(S, JSON.parse(JSON.stringify(DEFAULTS)));
+        applyStateToUI(); compute();
+        alert("初期値にリセットしました。");
+      });
+
+      on("gh-csv","click", ()=>{
+        const headers=["資金合計(¥)","為替($→¥)","モード","業者","手動","ボーナス率(%)","上限通貨","最大B($)","最大B(¥)","開設B(¥)","入金額(¥)","入金B(¥)","有効証拠金(¥)"];
+        const row=s=>[S.total,S.usdjpy,S.mode,s.name,s.man?"1":"0",s.rate,s.cur,s.maxu,(s.cur==="USD"?Math.round((yen(s.maxu))*S.usdjpy):s.maxj),s.open,Math.round(s.dep),Math.round(s.bon),Math.round(s.eq)];
+        const csv=[headers,row(S.A),row(S.B)].map(r=>r.join(",")).join("\n");
+        const blob=new Blob([csv],{type:"text/csv"}); const url=URL.createObjectURL(blob);
+        const a=document.createElement("a"); a.href=url; a.download="deposit_allocation_equalize.csv"; a.click(); URL.revokeObjectURL(url);
+      });
+    };
+
+    document.addEventListener("DOMContentLoaded", ()=>{
+      try{
+        migrateOldKeys();
+        try{
+          const saved=localStorage.getItem(KEY);
+          if(saved){ Object.assign(S, JSON.parse(saved)); }
+        }catch(_e){}
+        applyStateToUI(); bind(); compute();
+        try{ if("scrollRestoration" in history) history.scrollRestoration="manual"; }catch(_e){}
+      }catch(e){ showErr("初期化エラー", e); }
+    });
+  })();
+  </script>
+</body>
+</html>
